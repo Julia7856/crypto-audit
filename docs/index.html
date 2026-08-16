@@ -25,11 +25,11 @@
 
 <script id="auditor-src" type="text/python">
 """CryptoAudit - honest static auditor of Python crypto code /
-Честный статический аудитор Python крипто-кода."""
+Честный статический аудитор Python крипто-кода. Checks C01-C12 as in README."""
 
 import ast
 
-SEV = {"high": "❌ High", "medium": "⚠️ Medium", "low": "ℹ️ Low"}
+SEV = {"high": "❌ High", "medium": "⚠️ Medium"}
 
 class Finding:
     def __init__(self, check, sev, line, text, fix):
@@ -48,13 +48,19 @@ def audit(source):
             "Syntax error / синтаксическая ошибка",
             "Fix syntax first / сначала исправь синтаксис")]
 
+    sign_lines = []
+    has_verify = False
+
     for node in ast.walk(tree):
-        # C01 AES ECB
+        # C01 AES ECB mode / режим ECB
         if isinstance(node, ast.Constant) and isinstance(node.value, str) \
                 and "ECB" in node.value.upper():
             findings.append(Finding("C01", "high", node.lineno,
                 "AES ECB mode / режим ECB", "Use GCM / используй GCM"))
-        # C02 static nonce / IV
+        if isinstance(node, ast.Name) and "ECB" in node.id.upper():
+            findings.append(Finding("C01", "high", node.lineno,
+                "AES ECB mode / режим ECB", "Use GCM / используй GCM"))
+        # C02 Static nonce / IV / статический nonce
         if isinstance(node, ast.Assign):
             for t in node.targets:
                 if isinstance(t, ast.Name) and t.id.lower() in ("nonce", "iv") \
@@ -62,7 +68,7 @@ def audit(source):
                     findings.append(Finding("C02", "high", node.lineno,
                         "Static nonce/IV / статический nonce",
                         "os.urandom(12)"))
-        # C03 hardcoded keys
+        # C03 Hardcoded keys / хардкод ключей
         if isinstance(node, ast.Assign):
             for t in node.targets:
                 if isinstance(t, ast.Name) and any(k in t.id.lower() for k in
@@ -73,70 +79,78 @@ def audit(source):
                         findings.append(Finding("C03", "high", node.lineno,
                             "Hardcoded key / хардкод ключа",
                             "env / keyring / окружение"))
-        # C04 random instead of secrets
+        # C04 random instead of secrets / random вместо secrets
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                 and isinstance(node.func.value, ast.Name) and \
                 node.func.value.id == "random":
             findings.append(Finding("C04", "high", node.lineno,
                 "random instead of secrets / random вместо secrets",
                 "import secrets"))
-        # C05 weak hashes
+            if node.func.attr == "seed":
+                findings.append(Finding("C11", "high", node.lineno,
+                    "random.seed / сидированный random",
+                    "secrets / os.urandom"))
+        # C05 MD5/SHA1 for security / MD5/SHA1 в защите
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                 and isinstance(node.func.value, ast.Name) and \
                 node.func.value.id == "hashlib" and \
                 node.func.attr in ("md5", "sha1"):
-            findings.append(Finding("C05", "medium", node.lineno,
-                "Weak hash MD5/SHA1 / слабый хеш",
+            findings.append(Finding("C05", "high", node.lineno,
+                "MD5/SHA1 for security / MD5/SHA1 в защите",
                 "sha256+ / blake2b"))
-        # C06 PBKDF2 low iterations
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr == "pbkdf2_hmac":
-            it = None
-            for kw in node.keywords:
-                if kw.arg == "iterations" and isinstance(kw.value, ast.Constant):
-                    it = kw.value.value
-            if it is not None and it < 100000:
-                findings.append(Finding("C06", "medium", node.lineno,
-                    "PBKDF2 iterations too low / мало итераций",
-                    ">= 600000 (OWASP)"))
-        # C07 pickle on untrusted data
+        # C06 pickle on untrusted data / pickle на чужих данных
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                 and isinstance(node.func.value, ast.Name) and \
-                node.func.value.id == "pickle" and node.func.attr in ("load", "loads"):
-            findings.append(Finding("C07", "medium", node.lineno,
-                "pickle on untrusted data / pickle на непроверенных данных",
+                node.func.value.id == "pickle" and \
+                node.func.attr in ("load", "loads"):
+            findings.append(Finding("C06", "high", node.lineno,
+                "pickle on untrusted data / pickle на чужих данных",
                 "json / msgpack"))
-        # C08 assert in security checks
-        if isinstance(node, ast.Assert):
-            findings.append(Finding("C08", "low", node.lineno,
-                "assert in security check / assert в проверке",
-                "if + raise (assert отключается в -O)"))
-        # C09 == compare of secrets
-        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) \
-                and any(k in node.left.id.lower() for k in
-                        ("token", "mac", "sig", "digest", "password")) \
-                and any(isinstance(op, ast.Eq) for op in node.ops):
-            findings.append(Finding("C09", "medium", node.lineno,
-                "== compare of secret / сравнение секрета через ==",
-                "hmac.compare_digest"))
-        # C10 key slicing
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
-                and "key" in node.value.id.lower():
-            findings.append(Finding("C10", "low", node.lineno,
-                "Key slicing / нарезка ключа",
-                "Full-length key / ключ полной длины"))
-        # C11 eval / exec
+        # C07 eval / exec
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
                 and node.func.id in ("eval", "exec"):
-            findings.append(Finding("C11", "medium", node.lineno,
-                "eval/exec / динамический код",
-                "Avoid / избегай"))
-        # C12 input() as key material
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                and node.func.id == "input":
-            findings.append(Finding("C12", "low", node.lineno,
-                "input() as key material / input() как ключ",
-                "getpass / keyring"))
+            findings.append(Finding("C07", "medium", node.lineno,
+                "eval/exec / динамический код", "Avoid / избегай"))
+        # C08 verify=False in requests / отключённый TLS-check
+        if isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg == "verify" and isinstance(kw.value, ast.Constant) \
+                        and kw.value.value is False:
+                    findings.append(Finding("C08", "high", node.lineno,
+                        "verify=False / отключённый TLS-check",
+                        "verify=True"))
+        # C09 RSA PKCS1v15 padding / устаревший паддинг RSA
+        nm = ""
+        if isinstance(node, ast.Name):
+            nm = node.id
+        if isinstance(node, ast.Attribute):
+            nm = node.attr
+        if "pkcs1v15" in nm.lower():
+            findings.append(Finding("C09", "medium", node.lineno,
+                "RSA PKCS1v15 padding / устаревший паддинг RSA",
+                "PSS / OAEP"))
+        # C10 Short RSA keys / короткий RSA (<2048)
+        if isinstance(node, ast.Constant) and isinstance(node.value, int) \
+                and node.value in (512, 768, 1024, 1536):
+            findings.append(Finding("C10", "medium", node.lineno,
+                "Short RSA key / короткий RSA", ">= 2048"))
+        # C12 sign / verify tracking
+        if isinstance(node, ast.Call):
+            fn = ""
+            if isinstance(node.func, ast.Name):
+                fn = node.func.id
+            if isinstance(node.func, ast.Attribute):
+                fn = node.func.attr
+            if "sign" in fn.lower():
+                sign_lines.append(node.lineno)
+            if "verify" in fn.lower():
+                has_verify = True
+
+    # C12 Sign without verify / подпись без проверки
+    if sign_lines and not has_verify:
+        findings.append(Finding("C12", "medium", sign_lines[0],
+            "Sign without verify / подпись без проверки",
+            "Add verify path / добавь проверку подписи"))
     return findings
 
 def report(source):
