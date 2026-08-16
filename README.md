@@ -1,7 +1,7 @@
-# 🔍 CryptoAudit — Честный автоматический аудитор крипто-кода
+# 🔍 CryptoAudit — Honest Automated Crypto Code Auditor / Честный автоматический аудитор крипто-кода
 
-Вставь Python крипто-код → получи отчёт безопасности.
-Без хайпа. Статический анализ + честные severity.
+Paste Python crypto code — get a security report. No hype, no "AI-powered" buzzwords. Static analysis + honest severity.
+Вставь Python крипто-код — получи отчёт о безопасности. Без хайпа. Статический анализ + честные severity.
 
 **Live demo / живое демо:** https://julia7856.github.io/crypto-audit/
 
@@ -26,15 +26,19 @@
 
 | Tier | What / Что | Price / Цена |
 |---|---|---|
-| 🆓 Free | Web demo, basic checks / веб-демо, базовые проверки | $0 |
-| 📄 Full report | All checks + Markdown report / все проверки + отчёт | $5 |
-| 🧑‍💻 Human audit | Author review + threat model / ручной аудит автора + модель угроз | $150 |
+| 🆓 Free | Web demo, all checks / веб-демо, все проверки | $0 |
+| 💝 Support | Voluntary, if audit helped / добровольно, если аудит помог | сколько считаешь справедливым |
 
-Payment: USDT TRC-20 / TON / Оплата: USDT TRC-20 / TON
+Support / Поддержка:
+
+```
+TON / USDT (сеть TON): UQBYmt79Nb9DSmS7Zc6tgTXjBKMPf700kaD6WibcDT90KXiB
+~~~
+
 ## Honest limits / Честные ограничения
 
-Static analysis finds *patterns*, not *logic*. A clean report ≠ secure code. For critical systems order a human audit.
-Статика находит *паттерны*, а не *логику*. Чистый отчёт ≠ безопасный код. Для критичных систем заказывай ручной аудит.
+Static analysis finds *patterns*, not *logic*. A clean report ≠ secure code. For critical systems don't rely on static analysis alone.
+Статика находит *паттерны*, а не *логику*. Чистый отчёт ≠ безопасный код. Для критичных систем не полагайся только на статику.
 
 ## Author / Автор
 
