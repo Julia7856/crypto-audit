@@ -39,7 +39,6 @@ def audit(source: str) -> list:
         return [Finding("C00", "high", e.lineno or 1,
                         "Syntax error / синтаксическая ошибка",
                         "Fix syntax first / сначала исправь синтаксис")]
-    lines = source.splitlines()
 
     for node in ast.walk(tree):
         # C01 AES ECB
@@ -92,61 +91,5 @@ def audit(source: str) -> list:
                 and node.func.id in ("eval", "exec"):
             findings.append(Finding("C07", "medium", node.lineno,
                                     "eval / exec", "Avoid / избегай"))
-        # C08 verify=False
-        if isinstance(node, ast.Call):
-            for kw in getattr(node, "keywords", []):
-                if kw.arg == "verify" and isinstance(kw.value, ast.Constant) \
-                        and kw.value.value is False:
-                    findings.append(Finding("C08", "high", node.lineno,
-                                            "verify=False — TLS off / TLS выключен",
-                                            "verify=True"))
-        # C09 PKCS1v15
-        if isinstance(node, ast.Attribute) and node.attr == "PKCS1v15":
-            findings.append(Finding("C09", "medium", node.lineno,
-                                    "RSA PKCS1v15 / устаревший паддинг", "OAEP"))
-        # C10 RSA-1024
-        if isinstance(node, ast.Constant) and node.value == 1024:
-            findings.append(Finding("C10", "medium", node.lineno,
-                                    "RSA-1024 / короткий ключ", "2048+"))
-        # C11 random.seed
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr == "seed" and \
-                isinstance(node.func.value, ast.Name) and \
-                node.func.value.id == "random":
-            findings.append(Finding("C11", "high", node.lineno,
-                                    "random.seed / сидированный random",
-                                    "secrets — no seed / без seed"))
-    # C12 sign without verify
-    low = source.lower()
-    if "sign" in low and "encrypt" in low and "verify" not in low:
-        findings.append(Finding("C12", "medium", 1,
-                                "Sign present but no verify / подпись без проверки",
-                                "Add verify / добавь verify"))
-    return findings
-
-
-def report(source: str) -> str:
-    fs = audit(source)
-    out = ["# 🔍 CryptoAudit Report / Отчёт", ""]
-    if not fs:
-        out.append("✅ No common insecure patterns found / типовых уязвимых паттернов не найдено.")
-    else:
-        high = sum(1 for f in fs if f.sev == "high")
-        med = sum(1 for f in fs if f.sev == "medium")
-        out.append(f"**Findings / Найдено: {len(fs)}** ({high} High, {med} Medium)")
-        out.append("")
-        out.append("| # | Check | Severity | Line | Fix / Как чинить |")
-        out.append("|---|---|---|---|---|")
-        for i, f in enumerate(fs, 1):
-            out.append(f"| {i} | {f.text} | {SEV[f.sev]} | {f.line} | {f.fix} |")
-    out.append("")
-    out.append("---")
-    out.append("⚠️ Clean report ≠ secure code. Static analysis finds *patterns*, not *logic*.")
-    out.append("⚠️ Чистый отчёт ≠ безопасный код. Статика находит *паттерны*, а не *логику*.")
-    out.append("🧑‍💻 Human audit / ручной аудит автора: $150 — see README.")
-    return "\n".join(out)
-
-
-if __name__ == "__main__":
-    with open(sys.argv[1], encoding="utf-8") as fh:
-        print(report(fh.read()))
+       
+```
