@@ -20,5 +20,167 @@
 <div class="hint">Вставь Python крипто-код → получи отчёт. / Paste Python crypto code → get a report.</div>
 <div id="status">⏳ Loading… / Загрузка…</div>
 <textarea id="code" placeholder='import hashlib&#10;key = b"supersecret123"&#10;nonce = b"000000000000"'></textarea>
-<button id="run
-```
+<button id="run" disabled>🔍 Audit</button>
+<pre id="out"></pre>
+
+<script id="auditor-src" type="text/python">
+"""CryptoAudit - honest static auditor of Python crypto code /
+Честный статический аудитор Python крипто-кода."""
+
+import ast
+
+SEV = {"high": "❌ High", "medium": "⚠️ Medium", "low": "ℹ️ Low"}
+
+class Finding:
+    def __init__(self, check, sev, line, text, fix):
+        self.check = check
+        self.sev = sev
+        self.line = line
+        self.text = text
+        self.fix = fix
+
+def audit(source):
+    findings = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return [Finding("C00", "high", e.lineno or 1,
+            "Syntax error / синтаксическая ошибка",
+            "Fix syntax first / сначала исправь синтаксис")]
+
+    for node in ast.walk(tree):
+        # C01 AES ECB
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and "ECB" in node.value.upper():
+            findings.append(Finding("C01", "high", node.lineno,
+                "AES ECB mode / режим ECB", "Use GCM / используй GCM"))
+        # C02 static nonce / IV
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id.lower() in ("nonce", "iv") \
+                        and isinstance(node.value, ast.Constant):
+                    findings.append(Finding("C02", "high", node.lineno,
+                        "Static nonce/IV / статический nonce",
+                        "os.urandom(12)"))
+        # C03 hardcoded keys
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and any(k in t.id.lower() for k in
+                        ("key", "secret", "password", "passwd", "token")):
+                    if isinstance(node.value, ast.Constant) and \
+                            isinstance(node.value.value, (str, bytes)) and \
+                            len(node.value.value) >= 8:
+                        findings.append(Finding("C03", "high", node.lineno,
+                            "Hardcoded key / хардкод ключа",
+                            "env / keyring / окружение"))
+        # C04 random instead of secrets
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) and \
+                node.func.value.id == "random":
+            findings.append(Finding("C04", "high", node.lineno,
+                "random instead of secrets / random вместо secrets",
+                "import secrets"))
+        # C05 weak hashes
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) and \
+                node.func.value.id == "hashlib" and \
+                node.func.attr in ("md5", "sha1"):
+            findings.append(Finding("C05", "medium", node.lineno,
+                "Weak hash MD5/SHA1 / слабый хеш",
+                "sha256+ / blake2b"))
+        # C06 PBKDF2 low iterations
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr == "pbkdf2_hmac":
+            it = None
+            for kw in node.keywords:
+                if kw.arg == "iterations" and isinstance(kw.value, ast.Constant):
+                    it = kw.value.value
+            if it is not None and it < 100000:
+                findings.append(Finding("C06", "medium", node.lineno,
+                    "PBKDF2 iterations too low / мало итераций",
+                    ">= 600000 (OWASP)"))
+        # C07 pickle on untrusted data
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) and \
+                node.func.value.id == "pickle" and node.func.attr in ("load", "loads"):
+            findings.append(Finding("C07", "medium", node.lineno,
+                "pickle on untrusted data / pickle на непроверенных данных",
+                "json / msgpack"))
+        # C08 assert in security checks
+        if isinstance(node, ast.Assert):
+            findings.append(Finding("C08", "low", node.lineno,
+                "assert in security check / assert в проверке",
+                "if + raise (assert отключается в -O)"))
+        # C09 == compare of secrets
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) \
+                and any(k in node.left.id.lower() for k in
+                        ("token", "mac", "sig", "digest", "password")) \
+                and any(isinstance(op, ast.Eq) for op in node.ops):
+            findings.append(Finding("C09", "medium", node.lineno,
+                "== compare of secret / сравнение секрета через ==",
+                "hmac.compare_digest"))
+        # C10 key slicing
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
+                and "key" in node.value.id.lower():
+            findings.append(Finding("C10", "low", node.lineno,
+                "Key slicing / нарезка ключа",
+                "Full-length key / ключ полной длины"))
+        # C11 eval / exec
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in ("eval", "exec"):
+            findings.append(Finding("C11", "medium", node.lineno,
+                "eval/exec / динамический код",
+                "Avoid / избегай"))
+        # C12 input() as key material
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "input":
+            findings.append(Finding("C12", "low", node.lineno,
+                "input() as key material / input() как ключ",
+                "getpass / keyring"))
+    return findings
+
+def report(source):
+    fs = audit(source)
+    lines = ["🔍 CryptoAudit report / отчёт", "=" * 40]
+    if not fs:
+        lines.append("✅ No obvious issues found / явных проблем не найдено")
+        lines.append("(static analysis only / только статический анализ)")
+    for f in sorted(fs, key=lambda x: x.line):
+        lines.append(SEV.get(f.sev, f.sev) + "  L" + str(f.line) +
+                     "  [" + f.check + "] " + f.text)
+        lines.append("   → " + f.fix)
+    lines.append("=" * 40)
+    lines.append("CryptoAudit — honest static auditor / честный статический аудитор.")
+    lines.append("Support / поддержка: добровольно / voluntary.")
+    return "\n".join(lines)
+</script>
+
+<script>
+const statusEl = document.getElementById('status');
+const runBtn = document.getElementById('run');
+const outEl = document.getElementById('out');
+let pyodide = null;
+
+async function main() {
+  pyodide = await loadPyodide();
+  const src = document.getElementById('auditor-src').textContent;
+  pyodide.runPython(src);
+  statusEl.textContent = "✅ Ready / Готово";
+  runBtn.disabled = false;
+}
+main();
+
+runBtn.onclick = () => {
+  const code = document.getElementById('code').value;
+  try {
+    const rep = pyodide.runPython("report(" + JSON.stringify(code) + ")");
+    outEl.style.display = 'block';
+    outEl.textContent = rep;
+  } catch (e) {
+    outEl.style.display = 'block';
+    outEl.textContent = "❌ " + e;
+  }
+};
+</script>
+</body>
+</html>
