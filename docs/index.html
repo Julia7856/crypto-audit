@@ -8,6 +8,7 @@
 <style>
   body { background:#0d1117; color:#e6edf3; font-family:monospace; margin:0; padding:16px; }
   h1 { font-size:20px; }
+  h2 { font-size:16px; color:#58a6ff; margin-top:16px; }
   textarea { width:100%; height:200px; background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius:8px; padding:10px; font-family:monospace; font-size:13px; box-sizing:border-box; }
   button { background:#238636; color:#fff; border:0; padding:12px 20px; border-radius:6px; font-size:15px; margin-top:8px; }
   #status { color:#8b949e; margin:8px 0; }
@@ -24,146 +25,176 @@
 <pre id="out"></pre>
 
 <script id="auditor-src" type="text/python">
-"""CryptoAudit - honest static auditor of Python crypto code /
-Честный статический аудитор Python крипто-кода. Checks C01-C12 as in README."""
+"""CryptoAudit - honest static auditor of Python crypto code.
+Checks C01-C12 + PQC readiness C13-C15 + CBOM + HNDL.
+/ Честный статический аудитор. C01-C12 + квантовая готовность C13-C15 + CBOM + HNDL."""
 
 import ast
 
-SEV = {"high": "❌ High", "medium": "⚠️ Medium"}
+SEV = {"high": "❌ High", "medium": "⚠️ Medium", "low": "ℹ️ Low"}
 
 class Finding:
-    def __init__(self, check, sev, line, text, fix):
+    def __init__(self, check, sev, line, text, fix, section="classic"):
         self.check = check
         self.sev = sev
         self.line = line
         self.text = text
         self.fix = fix
+        self.section = section
+
+PQC_SAFE = {"AES-256", "AES-192", "SHA-256", "SHA-384", "SHA-512", "BLAKE2b", "BLAKE2s"}
+PQC_BROKEN = {"RSA", "ECDSA", "DSA", "DH", "ECDH", "ECIES"}
+PQC_PRIMS = {"ML-KEM", "ML-DSA", "SLH-DSA", "Kyber", "Dilithium", "SPHINCS", "FrodoKEM"}
 
 def audit(source):
     findings = []
+    cbom = set()
     try:
         tree = ast.parse(source)
     except SyntaxError as e:
         return [Finding("C00", "high", e.lineno or 1,
             "Syntax error / синтаксическая ошибка",
-            "Fix syntax first / сначала исправь синтаксис")]
+            "Fix syntax first / сначала исправь синтаксис")], set()
 
-    sign_lines = []
-    has_verify = False
+    sign_lines, has_verify, has_pqc = [], False, False
 
     for node in ast.walk(tree):
-        # C01 AES ECB mode / режим ECB
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
-                and "ECB" in node.value.upper():
-            findings.append(Finding("C01", "high", node.lineno,
-                "AES ECB mode / режим ECB", "Use GCM / используй GCM"))
+        # ---------- classic C01-C12 ----------
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "ECB" in node.value.upper():
+            findings.append(Finding("C01","high",node.lineno,"AES ECB mode / режим ECB","Use GCM / используй GCM"))
         if isinstance(node, ast.Name) and "ECB" in node.id.upper():
-            findings.append(Finding("C01", "high", node.lineno,
-                "AES ECB mode / режим ECB", "Use GCM / используй GCM"))
-        # C02 Static nonce / IV / статический nonce
+            findings.append(Finding("C01","high",node.lineno,"AES ECB mode / режим ECB","Use GCM / используй GCM"))
         if isinstance(node, ast.Assign):
             for t in node.targets:
-                if isinstance(t, ast.Name) and t.id.lower() in ("nonce", "iv") \
-                        and isinstance(node.value, ast.Constant):
-                    findings.append(Finding("C02", "high", node.lineno,
-                        "Static nonce/IV / статический nonce",
-                        "os.urandom(12)"))
-        # C03 Hardcoded keys / хардкод ключей
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                if isinstance(t, ast.Name) and any(k in t.id.lower() for k in
-                        ("key", "secret", "password", "passwd", "token")):
-                    if isinstance(node.value, ast.Constant) and \
-                            isinstance(node.value.value, (str, bytes)) and \
-                            len(node.value.value) >= 8:
-                        findings.append(Finding("C03", "high", node.lineno,
-                            "Hardcoded key / хардкод ключа",
-                            "env / keyring / окружение"))
-        # C04 random instead of secrets / random вместо secrets
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Name) and \
-                node.func.value.id == "random":
-            findings.append(Finding("C04", "high", node.lineno,
-                "random instead of secrets / random вместо secrets",
-                "import secrets"))
-            if node.func.attr == "seed":
-                findings.append(Finding("C11", "high", node.lineno,
-                    "random.seed / сидированный random",
-                    "secrets / os.urandom"))
-        # C05 MD5/SHA1 for security / MD5/SHA1 в защите
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Name) and \
-                node.func.value.id == "hashlib" and \
-                node.func.attr in ("md5", "sha1"):
-            findings.append(Finding("C05", "high", node.lineno,
-                "MD5/SHA1 for security / MD5/SHA1 в защите",
-                "sha256+ / blake2b"))
-        # C06 pickle on untrusted data / pickle на чужих данных
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Name) and \
-                node.func.value.id == "pickle" and \
-                node.func.attr in ("load", "loads"):
-            findings.append(Finding("C06", "high", node.lineno,
-                "pickle on untrusted data / pickle на чужих данных",
-                "json / msgpack"))
-        # C07 eval / exec
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                and node.func.id in ("eval", "exec"):
-            findings.append(Finding("C07", "medium", node.lineno,
-                "eval/exec / динамический код", "Avoid / избегай"))
-        # C08 verify=False in requests / отключённый TLS-check
+                if isinstance(t, ast.Name) and t.id.lower() in ("nonce","iv") and isinstance(node.value, ast.Constant):
+                    findings.append(Finding("C02","high",node.lineno,"Static nonce/IV / статический nonce","os.urandom(12)"))
+                if isinstance(t, ast.Name) and any(k in t.id.lower() for k in ("key","secret","password","passwd","token")):
+                    if isinstance(node.value, ast.Constant) and isinstance(node.value.value,(str,bytes)) and len(node.value.value)>=8:
+                        findings.append(Finding("C03","high",node.lineno,"Hardcoded key / хардкод ключа","env / keyring / окружение"))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id=="random":
+            findings.append(Finding("C04","high",node.lineno,"random instead of secrets / random вместо secrets","import secrets"))
+            if node.func.attr=="seed":
+                findings.append(Finding("C11","high",node.lineno,"random.seed / сидированный random","secrets / os.urandom"))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id=="hashlib" and node.func.attr in ("md5","sha1"):
+            findings.append(Finding("C05","high",node.lineno,"MD5/SHA1 for security / MD5/SHA1 в защите","sha256+ / blake2b"))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id=="pickle" and node.func.attr in ("load","loads"):
+            findings.append(Finding("C06","high",node.lineno,"pickle on untrusted data / pickle на чужих данных","json / msgpack"))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("eval","exec"):
+            findings.append(Finding("C07","medium",node.lineno,"eval/exec / динамический код","Avoid / избегай"))
         if isinstance(node, ast.Call):
             for kw in node.keywords:
-                if kw.arg == "verify" and isinstance(kw.value, ast.Constant) \
-                        and kw.value.value is False:
-                    findings.append(Finding("C08", "high", node.lineno,
-                        "verify=False / отключённый TLS-check",
-                        "verify=True"))
-        # C09 RSA PKCS1v15 padding / устаревший паддинг RSA
+                if kw.arg=="verify" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                    findings.append(Finding("C08","high",node.lineno,"verify=False / отключённый TLS-check","verify=True"))
         nm = ""
-        if isinstance(node, ast.Name):
-            nm = node.id
-        if isinstance(node, ast.Attribute):
-            nm = node.attr
+        if isinstance(node, ast.Name): nm=node.id
+        if isinstance(node, ast.Attribute): nm=node.attr
         if "pkcs1v15" in nm.lower():
-            findings.append(Finding("C09", "medium", node.lineno,
-                "RSA PKCS1v15 padding / устаревший паддинг RSA",
-                "PSS / OAEP"))
-        # C10 Short RSA keys / короткий RSA (<2048)
-        if isinstance(node, ast.Constant) and isinstance(node.value, int) \
-                and node.value in (512, 768, 1024, 1536):
-            findings.append(Finding("C10", "medium", node.lineno,
-                "Short RSA key / короткий RSA", ">= 2048"))
-        # C12 sign / verify tracking
+            findings.append(Finding("C09","medium",node.lineno,"RSA PKCS1v15 padding / устаревший паддинг RSA","PSS / OAEP"))
+        if isinstance(node, ast.Constant) and isinstance(node.value, int) and node.value in (512,768,1024,1536):
+            findings.append(Finding("C10","medium",node.lineno,"Short RSA key / короткий RSA",">= 2048"))
         if isinstance(node, ast.Call):
-            fn = ""
-            if isinstance(node.func, ast.Name):
-                fn = node.func.id
-            if isinstance(node.func, ast.Attribute):
-                fn = node.func.attr
-            if "sign" in fn.lower():
-                sign_lines.append(node.lineno)
-            if "verify" in fn.lower():
-                has_verify = True
+            fn=""
+            if isinstance(node.func, ast.Name): fn=node.func.id
+            if isinstance(node.func, ast.Attribute): fn=node.func.attr
+            if "sign" in fn.lower(): sign_lines.append(node.lineno)
+            if "verify" in fn.lower(): has_verify=True
+        if sign_lines and not has_verify:
+            pass  # handled after loop
 
-    # C12 Sign without verify / подпись без проверки
+        # ---------- PQC C13-C15 ----------
+        # detect KEX / signature primitives
+        if isinstance(node, ast.Attribute) and isinstance(node.func if False else node.value, ast.Attribute) if False else True:
+            pass
+        # look for known classical KEX
+        nm_full = ""
+        if isinstance(node, ast.Attribute):
+            try:
+                nm_full = ast.unparse(node)
+            except Exception:
+                nm_full = node.attr
+            if any(p in nm_full.lower() for p in ("x25519","x448","ecdh","diffiehellman","rsa")):
+                cbom.add(("RSA/ECDH KEX","KEX","❌ Shor breaks / ломается Шором",False))
+                findings.append(Finding("C13","high",node.lineno,
+                    "Classical-only KEX / классический KEX",
+                    "hybrid: ML-KEM + ECDH (FIPS 203)","pqc"))
+            if any(p in nm_full.lower() for p in ("rsaprivatekey","ecdsa","sign","signer")):
+                cbom.add(("RSA/ECDSA sign","sign","❌ Shor breaks / ломается Шором",False))
+                findings.append(Finding("C14","high",node.lineno,
+                    "Classical-only signature / классическая подпись",
+                    "ML-DSA (FIPS 204)","pqc"))
+        if isinstance(node, ast.Name):
+            if any(p in node.id.lower() for p in ("ml-kem","mlkem","kyber","ml-dsa","mldsa","dilithium","slh-dsa","sphincs")):
+                has_pqc = True
+                cbom.add(("PQC primitive","PQC","✅ quantum-safe / квантостойко",True))
+        # AES/hash detection
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            if node.func.value.id=="Cipher" or "aes" in ast.unparse(node.func).lower() if False else "aes" in (node.func.attr if isinstance(node.func, ast.Attribute) else "").lower():
+                cbom.add(("AES-256","cipher","✅ quantum-safe (Grover: 2^128)",True))
+            if node.func.value.id=="hashes" and node.func.attr in ("SHA256","SHA384","SHA512","SHA3_256"):
+                cbom.add((node.func.attr,"hash","✅ quantum-safe",True))
+            if node.func.value.id=="hashes" and node.func.attr in ("MD5","SHA1"):
+                cbom.add((node.func.attr,"hash","⚠️ weak anyway / слаб в любом случае",False))
+
+    # C12
     if sign_lines and not has_verify:
-        findings.append(Finding("C12", "medium", sign_lines[0],
-            "Sign without verify / подпись без проверки",
-            "Add verify path / добавь проверку подписи"))
-    return findings
+        findings.append(Finding("C12","medium",sign_lines[0],"Sign without verify / подпись без проверки","Add verify path / добавь проверку подписи"))
+    # C15 — no PQC primitives in crypto-heavy code
+    if cbom and not has_pqc and not any(c[3] for c in cbom):
+        findings.append(Finding("C15","medium",1,"No PQC primitives / нет постквантовых примитивов","Plan migration / спланируй миграцию","pqc"))
+    return findings, cbom
 
 def report(source):
-    fs = audit(source)
+    fs, cbom = audit(source)
     lines = ["🔍 CryptoAudit report / отчёт", "=" * 40]
+
+    # classic findings
+    classic = [f for f in fs if f.section!="pqc"]
+    pqc = [f for f in fs if f.section=="pqc"]
+
     if not fs:
         lines.append("✅ No obvious issues found / явных проблем не найдено")
         lines.append("(static analysis only / только статический анализ)")
-    for f in sorted(fs, key=lambda x: x.line):
-        lines.append(SEV.get(f.sev, f.sev) + "  L" + str(f.line) +
-                     "  [" + f.check + "] " + f.text)
-        lines.append("   → " + f.fix)
+    else:
+        for f in sorted(classic, key=lambda x: x.line):
+            lines.append(SEV.get(f.sev,f.sev)+"  L"+str(f.line)+"  ["+f.check+"] "+f.text)
+            lines.append("   → "+f.fix)
+
+    lines.append("")
+    lines.append("🧬 PQC Readiness / квантовая готовность")
+    lines.append("-" * 40)
+    if pqc:
+        for f in sorted(pqc, key=lambda x: x.line):
+            lines.append(SEV.get(f.sev,f.sev)+"  L"+str(f.line)+"  ["+f.check+"] "+f.text)
+            lines.append("   → "+f.fix)
+    else:
+        lines.append("   No PQC checks triggered / квантовые проверки не сработали")
+
+    # HNDL
+    lines.append("")
+    lines.append("⏳ HNDL / Harvest-Now-Decrypt-Later")
+    if any(not c[3] for c in cbom):
+        lines.append("   ⚠️  Записанный сегодня трафик может быть расшифрован после Q-Day.")
+        lines.append("      Traffic recorded today may be decrypted after Q-Day.")
+    else:
+        lines.append("   ✅  No HNDL risk detected / риск не обнаружен")
+
+    # CBOM
+    lines.append("")
+    lines.append("📋 CBOM — Cryptography Bill of Materials / крипто-ведомость")
+    lines.append("-" * 40)
+    if cbom:
+        for prim, role, note, _ in sorted(cbom):
+            lines.append("   "+prim+"  ("+role+")  "+note)
+    else:
+        lines.append("   (empty / пусто)")
+
+    # score
+    total = len(cbom)
+    safe = sum(1 for c in cbom if c[3])
+    score = 0 if total==0 else int(100*safe/total)
+    lines.append("")
     lines.append("=" * 40)
+    lines.append("PQC readiness score: "+str(score)+"/100")
     lines.append("CryptoAudit — honest static auditor / честный статический аудитор.")
     lines.append("Support / поддержка: добровольно / voluntary.")
     return "\n".join(lines)
@@ -174,7 +205,6 @@ const statusEl = document.getElementById('status');
 const runBtn = document.getElementById('run');
 const outEl = document.getElementById('out');
 let pyodide = null;
-
 async function main() {
   pyodide = await loadPyodide();
   const src = document.getElementById('auditor-src').textContent;
@@ -183,7 +213,6 @@ async function main() {
   runBtn.disabled = false;
 }
 main();
-
 runBtn.onclick = () => {
   const code = document.getElementById('code').value;
   try {
