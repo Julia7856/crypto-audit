@@ -1,7 +1,7 @@
 # 🔍 CryptoAudit — Honest Automated Crypto Code Auditor / Честный автоматический аудитор крипто-кода
 
-Paste Python crypto code — get a security report. No hype, no "AI-powered" buzzwords. Static analysis + honest severity.
-Вставь Python крипто-код — получи отчёт о безопасности. Без хайпа. Статический анализ + честные severity.
+Paste Python crypto code → get a security report. No hype, no "AI-powered" buzzwords. Static analysis + honest severity.
+Вставь Python крипто-код → получи отчёт о безопасности. Без хайпа. Статический анализ + честные severity.
 
 **Live demo / живое демо:** https://julia7856.github.io/crypto-audit/
 
@@ -15,27 +15,31 @@ Paste Python crypto code — get a security report. No hype, no "AI-powered" buz
 | C04 | `random` instead of `secrets` | ❌ High |
 | C05 | MD5/SHA1 for security / MD5/SHA1 в защите | ❌ High |
 | C06 | `pickle` on untrusted data / pickle на чужих данных | ❌ High |
-| C07 | `eval` / `exec` | ⚠️ Medium |
+| C07 | `eval`/`exec` | ⚠️ Medium |
 | C08 | `verify=False` in requests / отключённый TLS-чек | ❌ High |
 | C09 | RSA PKCS1v15 padding / устаревший паддинг RSA | ⚠️ Medium |
 | C10 | Short RSA keys / короткий RSA (<2048) | ⚠️ Medium |
 | C11 | `random.seed` / сидированный random | ❌ High |
 | C12 | Sign without verify / подпись без проверки | ⚠️ Medium |
+| C13 | Classical-only KEX / классический обмен ключами без PQC | ❌ High |
+| C14 | Classical-only signature / классическая подпись без PQC | ❌ High |
+| C15 | No PQC primitives / нет постквантовых примитивов | ⚠️ Medium |
 
-## Pricing / Цены
+## 🧬 PQC Readiness / Квантовая готовность
 
-| Tier | What / Что | Price / Цена |
-|---|---|---|
-| 🆓 Free | Web demo, all checks / веб-демо, все проверки | $0 |
-| 💝 Support | Voluntary, if audit helped / добровольно, если аудит помог | сколько считаешь справедливым |
+Помимо классических дыр, CryptoAudit оценивает готовность кода к **Q-Day** — моменту, когда квантовый компьютер сможет сломать RSA/ECC. В отчёт добавлены:
+- **CBOM** (Cryptography Bill of Materials / крипто-ведомость) — инвентарь всех криптопримитивов
+- **HNDL warning** (Harvest-Now-Decrypt-Later) — если записанный сегодня трафик может быть расшифрован завтра
+- **PQC readiness score** — оценка 0–100
 
-Support / Поддержка:
+**Честно:** статический эвристический анализ. Он не видит динамически подгруженную криптографию и конфиги серверов. Для enterprise CBOM нужны runtime-сканеры.
 
-```
-TON / USDT (сеть TON): UQBYmt79Nb9DSmS7Zc6tgTXjBKMPf700kaD6WibcDT90KXiB
-~~~
+## License / Лицензия
 
-## Honest limits / Честные ограничения
+© 2026 Julia7856. Non-commercial use is free. Commercial use requires permission — open an Issue.
+© 2026 Julia7856. Некоммерческое использование бесплатно. Коммерческое использование — по согласованию (открой Issue).
+
+## Honest Limits / Честные ограничения
 
 Static analysis finds *patterns*, not *logic*. A clean report ≠ secure code. For critical systems don't rely on static analysis alone.
 Статика находит *паттерны*, а не *логику*. Чистый отчёт ≠ безопасный код. Для критичных систем не полагайся только на статику.
@@ -43,4 +47,4 @@ Static analysis finds *patterns*, not *logic*. A clean report ≠ secure code. F
 ## Author / Автор
 
 Julia7856 — author of Lantern (post-quantum P2P messenger) and Grail (local data guardian). 14-threat honest model, real findings.
-Автор Lantern (постквантовый P2P-мессенджер) и Grail (локальный защитник данных). Честная модель на 14 угроз, реальные находки.
+Автор Lantern (постквантовый P2P-мессенджер) and Grail (локальный защитник данных). Честная модель на 14 угроз, реальные находки.
