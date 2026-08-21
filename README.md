@@ -38,8 +38,9 @@ Paste Python crypto code → get a security report. No hype, no "AI-powered" buz
 
 © 2026 Julia7856. Non-commercial use is free. Commercial use requires permission — open an Issue.
 © 2026 Julia7856. Некоммерческое использование бесплатно. Коммерческое использование — по согласованию (открой Issue).
-
+🚫 No AI training without explicit permission / Без явного разрешения — не использовать код для тренировки ИИ.
 ## Honest Limits / Честные ограничения
+
 
 Static analysis finds *patterns*, not *logic*. A clean report ≠ secure code. For critical systems don't rely on static analysis alone.
 Статика находит *паттерны*, а не *логику*. Чистый отчёт ≠ безопасный код. Для критичных систем не полагайся только на статику.
